@@ -1,0 +1,160 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1771629335210,
+      "tag": "0000_overjoyed_zombie",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1771629343597,
+      "tag": "0001_roles_and_grants",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1771629344067,
+      "tag": "0002_seed_and_backfill",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1771629344525,
+      "tag": "0003_functional_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1771629345028,
+      "tag": "0004_drop_legacy_schema_migrations",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1771636449319,
+      "tag": "0005_auth_backfill",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1771690458743,
+      "tag": "0006_nebulous_network",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1771736994620,
+      "tag": "0007_fresh_the_hood",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1771807023919,
+      "tag": "0008_sleepy_lyja",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1771890000000,
+      "tag": "0009_vm_reconciler_foundation",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1771869732112,
+      "tag": "0010_remove_vm_status_legacy",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1771916000000,
+      "tag": "0011_startup_watchdog",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1771927000000,
+      "tag": "0012_runtime_upgrade_flags",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1771980000000,
+      "tag": "0013_upgrade_risk_tracking",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1771954674219,
+      "tag": "0014_drop_gpu_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1771997100000,
+      "tag": "0015_security_hardening_auth",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1772057212350,
+      "tag": "0016_goal_mode_session_manager",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1772311200000,
+      "tag": "0017_session_model_persistence",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1772339786000,
+      "tag": "0018_long_turn_checkpoints",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1772405016733,
+      "tag": "0019_observed_runtime_version",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1772489400000,
+      "tag": "0020_agent_user_message_recency",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1772493000000,
+      "tag": "0021_default_session_model_gemini",
+      "breakpoints": true
+    }
+  ]
+}

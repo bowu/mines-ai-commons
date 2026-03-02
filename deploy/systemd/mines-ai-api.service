@@ -1,0 +1,24 @@
+[Unit]
+Description=Mines AI API Service
+After=network-online.target cloud-sql-proxy.service
+Wants=network-online.target cloud-sql-proxy.service
+
+[Service]
+Type=simple
+User=mines-ai
+Group=mines-ai
+WorkingDirectory=/opt/mines-ai/current/server
+Environment=NODE_ENV=production
+EnvironmentFile=/opt/mines-ai/shared/.env
+ExecStart=/usr/bin/env node dist/index.js
+Restart=always
+RestartSec=3
+TimeoutStartSec=60
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/mines-ai /var/log/mines-ai /tmp
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,99 @@
+name: Sandbox Image Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      runtime_version:
+        description: "Previously released runtime version to re-promote"
+        required: true
+        type: string
+      image_name:
+        description: "Optional explicit image name for the rollback target"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_SERVICE_ACCOUNT_KEY: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Validate required repo vars/secrets
+        run: |
+          set -euo pipefail
+          test -n "${GCP_PROJECT_ID}" || (echo "Missing repository variable: GCP_PROJECT_ID" >&2; exit 1)
+          if [ -n "${GCP_SERVICE_ACCOUNT_KEY}" ]; then
+            exit 0
+          fi
+          test -n "${GCP_WORKLOAD_IDENTITY_PROVIDER}" || (echo "Missing secret: GCP_WORKLOAD_IDENTITY_PROVIDER" >&2; exit 1)
+          test -n "${GCP_SERVICE_ACCOUNT}" || (echo "Missing secret: GCP_SERVICE_ACCOUNT" >&2; exit 1)
+
+      - name: Authenticate to GCP (service account key)
+        if: ${{ env.GCP_SERVICE_ACCOUNT_KEY != '' }}
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
+        with:
+          credentials_json: ${{ env.GCP_SERVICE_ACCOUNT_KEY }}
+
+      - name: Authenticate to GCP (workload identity)
+        if: ${{ env.GCP_SERVICE_ACCOUNT_KEY == '' }}
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f
+
+      - name: Re-promote rollback image
+        id: rollback
+        run: |
+          set -euo pipefail
+          target_image="${{ github.event.inputs.image_name }}"
+          if [ -z "${target_image}" ]; then
+            runtime_label="$(echo "${{ github.event.inputs.runtime_version }}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9._-]+/-/g; s/^-+//; s/-+$//')"
+            if [ -z "${runtime_label}" ]; then
+              echo "runtime_version '${{ github.event.inputs.runtime_version }}' cannot be converted to a valid label" >&2
+              exit 1
+            fi
+
+            target_image="$(
+              gcloud compute images list \
+                --project "${GCP_PROJECT_ID}" \
+                --filter "labels.managed_by=mines_ai AND labels.runtime_version=${runtime_label}" \
+                --sort-by="~creationTimestamp" \
+                --limit 1 \
+                --format "value(name)"
+            )"
+          fi
+
+          if [ -z "${target_image}" ]; then
+            echo "No image found for runtime version ${{ github.event.inputs.runtime_version }}" >&2
+            exit 1
+          fi
+
+          bash scripts/gcp/promote-sandbox-image.sh \
+            --image-type runtime \
+            --version "${{ github.event.inputs.runtime_version }}" \
+            --image-name "${target_image}"
+
+      - name: Rollback summary
+        run: |
+          {
+            echo "### Sandbox image rollback applied"
+            echo ""
+            echo "- Runtime version: \`${{ steps.rollback.outputs.runtime_version || github.event.inputs.runtime_version }}\`"
+            echo "- Image name: \`${{ steps.rollback.outputs.image_name }}\`"
+            echo ""
+            echo "Set deployed \`SANDBOX_EXPECTED_RUNTIME_VERSION\` back to the rollback version."
+          } >> "${GITHUB_STEP_SUMMARY}"

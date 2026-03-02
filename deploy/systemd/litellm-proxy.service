@@ -1,0 +1,25 @@
+[Unit]
+Description=Mines AI LiteLLM Proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mines-ai
+Group=mines-ai
+WorkingDirectory=/opt/mines-ai/shared
+EnvironmentFile=/opt/mines-ai/shared/.env
+ExecStart=/bin/sh -lc 'exec env -u DATABASE_URL /opt/mines-ai/litellm-venv/bin/litellm --config /opt/mines-ai/shared/litellm-config.yaml --host 127.0.0.1 --port 4000'
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/opt/mines-ai/shared
+
+[Install]
+WantedBy=multi-user.target

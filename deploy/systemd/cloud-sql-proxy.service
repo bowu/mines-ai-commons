@@ -1,0 +1,18 @@
+[Unit]
+Description=Cloud SQL Auth Proxy for Mines AI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mines-ai
+Group=mines-ai
+EnvironmentFile=/opt/mines-ai/shared/.env
+ExecStart=/bin/sh -lc 'exec /usr/local/bin/cloud-sql-proxy --address 127.0.0.1 --port 5432 "$CLOUD_SQL_INSTANCE_CONNECTION_NAME"'
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

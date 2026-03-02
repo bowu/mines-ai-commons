@@ -1,0 +1,11 @@
+node_modules
+client/node_modules
+dist
+client/dist
+data
+.git
+.env
+.env.*
+openclaw
+openwork
+*.md

@@ -1,0 +1,28 @@
+#!/usr/bin/env sh
+set -eu
+
+if [ "${SKIP_ENV_SYNC:-0}" = "1" ]; then
+  exit 0
+fi
+
+repo_root="$(git rev-parse --show-toplevel)"
+sync_script="${repo_root}/scripts/secrets/sync-production-env-from-dotenv.sh"
+
+should_sync=0
+while IFS=' ' read -r local_ref _local_sha remote_ref _remote_sha; do
+  if [ "${local_ref}" = "refs/heads/main" ] || [ "${remote_ref}" = "refs/heads/main" ]; then
+    should_sync=1
+  fi
+done
+
+if [ "${should_sync}" -eq 0 ]; then
+  exit 0
+fi
+
+if [ ! -x "${sync_script}" ]; then
+  echo "[pre-push] Missing sync script: ${sync_script}" >&2
+  exit 1
+fi
+
+echo "[pre-push] Syncing production env secret from local .env"
+"${sync_script}" --env-file "${repo_root}/.env" --environment production --secret-name PROD_APP_ENV

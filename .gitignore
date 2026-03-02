@@ -1,0 +1,71 @@
+# Dependencies
+node_modules/
+client/node_modules/
+
+# Build outputs
+dist/
+client/dist/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Docker volumes (if local)
+postgres_data/
+bookstack_data/
+bookstack_db_data/
+
+# TypeScript
+*.tsbuildinfo
+
+# Compiled JS files in src (using tsx)
+src/**/*.js
+
+# Root scripts folder (keep ignored by default, but track scripts/gcp and scripts/deploy)
+!/scripts/
+/scripts/*
+!/scripts/gcp/
+!/scripts/gcp/**
+!/scripts/deploy/
+!/scripts/deploy/**
+!/scripts/secrets/
+!/scripts/secrets/**
+
+# Temp files
+ui.png
+ui-agents-current.png
+ui-skills-current.png
+ui-wiki-current.png
+mockup.html
+data/
+.dev/
+playwright-report/
+test-results/
+
+# Local embedded repos (do not track in this repo)
+openclaw/
+openwork/
+
+# Sandbox runtime state (generated at runtime, not for version control)
+sandbox/.sandbox-state/
+
+# Planning docs are committed
+!PLAN.md
+!plans/
+!plans/**

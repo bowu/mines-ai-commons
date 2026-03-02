@@ -1,0 +1,116 @@
+name: Sandbox Image Build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "sandbox/**"
+      - "scripts/gcp/**"
+      - ".github/workflows/sandbox-image.yml"
+      - "pnpm-lock.yaml"
+      - "package.json"
+  workflow_dispatch:
+    inputs:
+      runtime_version:
+        description: "Runtime version label (default: short git SHA)"
+        required: false
+        type: string
+      smoke_test:
+        description: "Boot a VM from the built image and verify runtime files"
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build-sandbox-image:
+    runs-on: ubuntu-latest
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_ZONE: ${{ vars.GCP_ZONE }}
+      SANDBOX_BASE_IMAGE_PROJECT: ${{ vars.SANDBOX_BASE_IMAGE_PROJECT || vars.GCP_PROJECT_ID }}
+      IMAGE_FAMILY: ${{ vars.SANDBOX_IMAGE_FAMILY || 'mines-sandbox-runtime' }}
+      GCP_SERVICE_ACCOUNT_KEY: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Validate required repo vars/secrets
+        run: |
+          set -euo pipefail
+          test -n "${GCP_PROJECT_ID}" || (echo "Missing repository variable: GCP_PROJECT_ID" >&2; exit 1)
+          test -n "${GCP_ZONE}" || (echo "Missing repository variable: GCP_ZONE" >&2; exit 1)
+          if [ -n "${GCP_SERVICE_ACCOUNT_KEY}" ]; then
+            exit 0
+          fi
+          test -n "${GCP_WORKLOAD_IDENTITY_PROVIDER}" || (echo "Missing secret: GCP_WORKLOAD_IDENTITY_PROVIDER" >&2; exit 1)
+          test -n "${GCP_SERVICE_ACCOUNT}" || (echo "Missing secret: GCP_SERVICE_ACCOUNT" >&2; exit 1)
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .nvmrc
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve runtime version
+        id: runtime
+        run: |
+          set -euo pipefail
+          if [ -n "${{ github.event.inputs.runtime_version || '' }}" ]; then
+            version="${{ github.event.inputs.runtime_version }}"
+          else
+            version="${GITHUB_SHA::12}"
+          fi
+          echo "runtime_version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build sandbox runtime archive
+        run: |
+          set -euo pipefail
+          bash scripts/gcp/build-sandbox-runtime-archive.sh "${{ steps.runtime.outputs.runtime_version }}" sandbox-runtime.tar.gz
+
+      - name: Authenticate to GCP (service account key)
+        if: ${{ env.GCP_SERVICE_ACCOUNT_KEY != '' }}
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
+        with:
+          credentials_json: ${{ env.GCP_SERVICE_ACCOUNT_KEY }}
+
+      - name: Authenticate to GCP (workload identity)
+        if: ${{ env.GCP_SERVICE_ACCOUNT_KEY == '' }}
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f
+
+      - name: Build candidate image
+        id: build
+        env:
+          SMOKE_TEST: ${{ github.event.inputs.smoke_test || 'true' }}
+        run: |
+          set -euo pipefail
+          bash scripts/gcp/build-sandbox-image.sh "${{ steps.runtime.outputs.runtime_version }}" sandbox-runtime.tar.gz
+
+      - name: Build summary
+        run: |
+          {
+            echo "### Sandbox image build complete"
+            echo ""
+            echo "- Runtime version: \`${{ steps.build.outputs.runtime_version || steps.runtime.outputs.runtime_version }}\`"
+            echo "- Image name: \`${{ steps.build.outputs.image_name }}\`"
+            echo "- State label: \`candidate\`"
+            echo ""
+            echo "Promote with: workflow **Sandbox Image Promote**."
+          } >> "${GITHUB_STEP_SUMMARY}"

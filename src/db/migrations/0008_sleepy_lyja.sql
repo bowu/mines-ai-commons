@@ -1,0 +1,1 @@
+ALTER TABLE "agents" ADD COLUMN "active_stream_lease_until" timestamp;

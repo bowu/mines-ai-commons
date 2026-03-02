@@ -1,0 +1,21 @@
+services:
+  # PostgreSQL with pgvector
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: mines-ai-postgres
+    environment:
+      POSTGRES_DB: mines_ai
+      POSTGRES_USER: mines_ai
+      POSTGRES_PASSWORD: mines_ai_password
+    ports:
+      - "5435:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mines_ai -d mines_ai"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:

@@ -1,0 +1,82 @@
+name: Sandbox Base Image Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_version:
+        description: "Base version label (example: 20260302 or v3)"
+        required: true
+        type: string
+      smoke_test:
+        description: "Boot a VM from the built base image and verify tooling"
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build-sandbox-base-image:
+    runs-on: ubuntu-latest
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_ZONE: ${{ vars.GCP_ZONE }}
+      UBUNTU_BASE_IMAGE_PROJECT: ${{ vars.BASE_IMAGE_PROJECT || 'ubuntu-os-cloud' }}
+      UBUNTU_BASE_IMAGE_FAMILY: ${{ vars.BASE_IMAGE_FAMILY || 'ubuntu-2204-lts' }}
+      BASE_IMAGE_FAMILY: ${{ vars.SANDBOX_BASE_IMAGE_FAMILY || 'mines-sandbox-base' }}
+      GCP_SERVICE_ACCOUNT_KEY: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Validate required repo vars/secrets
+        run: |
+          set -euo pipefail
+          test -n "${GCP_PROJECT_ID}" || (echo "Missing repository variable: GCP_PROJECT_ID" >&2; exit 1)
+          test -n "${GCP_ZONE}" || (echo "Missing repository variable: GCP_ZONE" >&2; exit 1)
+          if [ -n "${GCP_SERVICE_ACCOUNT_KEY}" ]; then
+            exit 0
+          fi
+          test -n "${GCP_WORKLOAD_IDENTITY_PROVIDER}" || (echo "Missing secret: GCP_WORKLOAD_IDENTITY_PROVIDER" >&2; exit 1)
+          test -n "${GCP_SERVICE_ACCOUNT}" || (echo "Missing secret: GCP_SERVICE_ACCOUNT" >&2; exit 1)
+
+      - name: Authenticate to GCP (service account key)
+        if: ${{ env.GCP_SERVICE_ACCOUNT_KEY != '' }}
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
+        with:
+          credentials_json: ${{ env.GCP_SERVICE_ACCOUNT_KEY }}
+
+      - name: Authenticate to GCP (workload identity)
+        if: ${{ env.GCP_SERVICE_ACCOUNT_KEY == '' }}
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f
+
+      - name: Build candidate base image
+        id: build
+        env:
+          SMOKE_TEST: ${{ github.event.inputs.smoke_test || 'true' }}
+        run: |
+          set -euo pipefail
+          bash scripts/gcp/build-sandbox-base-image.sh "${{ github.event.inputs.base_version }}"
+
+      - name: Build summary
+        run: |
+          {
+            echo "### Sandbox base image build complete"
+            echo ""
+            echo "- Base version: \`${{ steps.build.outputs.base_version || github.event.inputs.base_version }}\`"
+            echo "- Image name: \`${{ steps.build.outputs.image_name }}\`"
+            echo "- State label: \`candidate\`"
+            echo ""
+            echo "Promote with: workflow **Sandbox Base Image Promote**."
+          } >> "${GITHUB_STEP_SUMMARY}"

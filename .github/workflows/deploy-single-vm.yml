@@ -1,0 +1,185 @@
+name: Deploy Single VM
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_id:
+        description: "Optional release ID (defaults to commit SHA)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      PROD_DOMAIN: ${{ vars.PROD_DOMAIN }}
+      PROD_ENV_FILE: ${{ vars.PROD_ENV_FILE || '/opt/mines-ai/shared/.env' }}
+      PROD_STAGING_DIR: ${{ vars.PROD_STAGING_DIR || '/tmp/mines-ai-release' }}
+      PROD_APP_ENV: ${{ secrets.PROD_APP_ENV }}
+      PROD_SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
+      PROD_SSH_PORT: ${{ secrets.PROD_SSH_PORT }}
+      PROD_SSH_PRIVATE_KEY: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+      PROD_SSH_USER: ${{ secrets.PROD_SSH_USER }}
+      PROD_SSH_KNOWN_HOSTS: ${{ secrets.PROD_SSH_KNOWN_HOSTS }}
+    steps:
+      - name: Validate deploy configuration
+        run: |
+          set -euo pipefail
+          required_vars=(
+            PROD_DOMAIN
+            PROD_ENV_FILE
+            PROD_STAGING_DIR
+            PROD_APP_ENV
+            PROD_SSH_HOST
+            PROD_SSH_PORT
+            PROD_SSH_PRIVATE_KEY
+            PROD_SSH_USER
+            PROD_SSH_KNOWN_HOSTS
+          )
+          for name in "${required_vars[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing required deploy configuration: ${name}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.inputs.release_id != '' && github.event.inputs.release_id || github.sha }}
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .nvmrc
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build release assets
+        run: pnpm build
+
+      - name: Resolve release ID
+        id: release
+        run: |
+          set -euo pipefail
+          release_id="${{ github.event.inputs.release_id }}"
+          if [ -z "${release_id}" ]; then
+            release_id="${GITHUB_SHA}"
+          fi
+          release_id="$(printf '%s' "${release_id}" | tr -cs 'A-Za-z0-9._-' '-' | sed 's/^-*//;s/-*$//')"
+          if [ -z "${release_id}" ]; then
+            echo "release_id cannot be empty after sanitization" >&2
+            exit 1
+          fi
+          echo "release_id=${release_id}" >> "${GITHUB_OUTPUT}"
+
+      - name: Package server and client artifacts
+        run: |
+          set -euo pipefail
+          rm -rf release-package server.tar.gz client.tar.gz
+          mkdir -p release-package/server/src/db release-package/client
+          cp -R dist release-package/server/dist
+          cp -R src/db/migrations release-package/server/src/db/migrations
+          cp drizzle.config.ts release-package/server/drizzle.config.ts
+          cp package.json release-package/server/package.json
+          cp pnpm-lock.yaml release-package/server/pnpm-lock.yaml
+          cp -R node_modules release-package/server/node_modules
+          cp -R client/dist/. release-package/client/
+          tar -C release-package/server -czf server.tar.gz .
+          tar -C release-package/client -czf client.tar.gz .
+          tar -czf deploy-config.tar.gz scripts/deploy deploy/systemd deploy/caddy deploy/litellm
+
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          mkdir -p "${HOME}/.ssh"
+          chmod 700 "${HOME}/.ssh"
+          printf "%s\n" "${PROD_SSH_PRIVATE_KEY}" > "${HOME}/.ssh/id_ed25519"
+          chmod 600 "${HOME}/.ssh/id_ed25519"
+          printf "%s\n" "${PROD_SSH_KNOWN_HOSTS}" > "${HOME}/.ssh/known_hosts"
+          chmod 600 "${HOME}/.ssh/known_hosts"
+
+      - name: Upload release artifacts to VM staging
+        run: |
+          set -euo pipefail
+          ssh_target="${PROD_SSH_USER}@${PROD_SSH_HOST}"
+          release_id="${{ steps.release.outputs.release_id }}"
+          remote_release_dir="${PROD_STAGING_DIR}/${release_id}"
+          ssh -p "${PROD_SSH_PORT}" -o StrictHostKeyChecking=yes "${ssh_target}" \
+            "set -euo pipefail; mkdir -p '${remote_release_dir}'"
+          scp -P "${PROD_SSH_PORT}" -o StrictHostKeyChecking=yes server.tar.gz "${ssh_target}:${remote_release_dir}/server.tar.gz"
+          scp -P "${PROD_SSH_PORT}" -o StrictHostKeyChecking=yes client.tar.gz "${ssh_target}:${remote_release_dir}/client.tar.gz"
+          scp -P "${PROD_SSH_PORT}" -o StrictHostKeyChecking=yes deploy-config.tar.gz "${ssh_target}:${remote_release_dir}/deploy-config.tar.gz"
+
+      - name: Sync production env file to VM
+        run: |
+          set -euo pipefail
+          ssh_target="${PROD_SSH_USER}@${PROD_SSH_HOST}"
+          printf '%s\n' "${PROD_APP_ENV}" | ssh -p "${PROD_SSH_PORT}" -o StrictHostKeyChecking=yes "${ssh_target}" \
+            "set -euo pipefail; \
+              tmp_env=\$(mktemp); \
+              cat > \"\${tmp_env}\"; \
+              sudo -n install -m 0640 -o root -g mines-ai \"\${tmp_env}\" '${PROD_ENV_FILE}'; \
+              rm -f \"\${tmp_env}\""
+
+      - name: Install release on VM
+        run: |
+          set -euo pipefail
+          ssh_target="${PROD_SSH_USER}@${PROD_SSH_HOST}"
+          release_id="${{ steps.release.outputs.release_id }}"
+          remote_release_dir="${PROD_STAGING_DIR}/${release_id}"
+          ssh -p "${PROD_SSH_PORT}" -o StrictHostKeyChecking=yes "${ssh_target}" \
+            "set -euo pipefail; \
+              tmp_deploy_dir=\$(mktemp -d); \
+              tar -xzf '${remote_release_dir}/deploy-config.tar.gz' -C \"\${tmp_deploy_dir}\"; \
+              sudo -n mkdir -p /opt/mines-ai/scripts/deploy /opt/mines-ai/deploy/systemd /opt/mines-ai/deploy/caddy /opt/mines-ai/deploy/litellm; \
+              sudo -n install -m 0755 \"\${tmp_deploy_dir}/scripts/deploy/bootstrap-single-vm.sh\" /opt/mines-ai/scripts/deploy/bootstrap-single-vm.sh; \
+              sudo -n install -m 0755 \"\${tmp_deploy_dir}/scripts/deploy/install-release.sh\" /opt/mines-ai/scripts/deploy/install-release.sh; \
+              sudo -n install -m 0755 \"\${tmp_deploy_dir}/scripts/deploy/rollback-single-vm.sh\" /opt/mines-ai/scripts/deploy/rollback-single-vm.sh; \
+              sudo -n install -m 0755 \"\${tmp_deploy_dir}/scripts/deploy/smoke-check.sh\" /opt/mines-ai/scripts/deploy/smoke-check.sh; \
+              sudo -n install -m 0755 \"\${tmp_deploy_dir}/scripts/deploy/validate-env.sh\" /opt/mines-ai/scripts/deploy/validate-env.sh; \
+              sudo -n install -m 0755 \"\${tmp_deploy_dir}/scripts/deploy/check-quiescence.sh\" /opt/mines-ai/scripts/deploy/check-quiescence.sh; \
+              sudo -n install -m 0644 \"\${tmp_deploy_dir}/deploy/systemd/mines-ai-api.service\" /opt/mines-ai/deploy/systemd/mines-ai-api.service; \
+              sudo -n install -m 0644 \"\${tmp_deploy_dir}/deploy/systemd/cloud-sql-proxy.service\" /opt/mines-ai/deploy/systemd/cloud-sql-proxy.service; \
+              sudo -n install -m 0644 \"\${tmp_deploy_dir}/deploy/systemd/litellm-proxy.service\" /opt/mines-ai/deploy/systemd/litellm-proxy.service; \
+              sudo -n install -m 0644 \"\${tmp_deploy_dir}/deploy/caddy/Caddyfile\" /opt/mines-ai/deploy/caddy/Caddyfile; \
+              sudo -n install -m 0644 \"\${tmp_deploy_dir}/deploy/litellm/litellm-config.yaml\" /opt/mines-ai/deploy/litellm/litellm-config.yaml; \
+              rm -rf \"\${tmp_deploy_dir}\"; \
+              sudo -n /opt/mines-ai/scripts/deploy/install-release.sh \
+              --release-id '${release_id}' \
+              --server-tar '${remote_release_dir}/server.tar.gz' \
+              --client-tar '${remote_release_dir}/client.tar.gz' \
+              --domain '${PROD_DOMAIN}' \
+              --env-file '${PROD_ENV_FILE}'"
+
+      - name: Cleanup VM staging artifacts
+        if: always() && steps.release.outputs.release_id != ''
+        run: |
+          set -euo pipefail
+          ssh_target="${PROD_SSH_USER}@${PROD_SSH_HOST}"
+          release_id="${{ steps.release.outputs.release_id }}"
+          ssh -p "${PROD_SSH_PORT}" -o StrictHostKeyChecking=yes "${ssh_target}" \
+            "set -euo pipefail; rm -rf '${PROD_STAGING_DIR}/${release_id}'"
+
+      - name: Collect failure diagnostics
+        if: failure()
+        run: |
+          set -euo pipefail
+          ssh_target="${PROD_SSH_USER}@${PROD_SSH_HOST}"
+          ssh -p "${PROD_SSH_PORT}" -o StrictHostKeyChecking=yes "${ssh_target}" \
+            "set +e;
+             sudo -n systemctl status mines-ai-api caddy cloud-sql-proxy --no-pager;
+             sudo -n journalctl -u mines-ai-api -u cloud-sql-proxy -u caddy --since '10 minutes ago' --no-pager | tail -n 300;
+             sudo -n readlink -f /opt/mines-ai/current"

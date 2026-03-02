@@ -1,0 +1,105 @@
+name: Rollback Single VM
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_id:
+        description: "Release ID to roll back to (must exist in /opt/mines-ai/releases)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      PROD_DOMAIN: ${{ vars.PROD_DOMAIN }}
+      PROD_ENV_FILE: ${{ vars.PROD_ENV_FILE || '/opt/mines-ai/shared/.env' }}
+      PROD_SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
+      PROD_SSH_PORT: ${{ secrets.PROD_SSH_PORT }}
+      PROD_SSH_PRIVATE_KEY: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+      PROD_SSH_USER: ${{ secrets.PROD_SSH_USER }}
+      PROD_SSH_KNOWN_HOSTS: ${{ secrets.PROD_SSH_KNOWN_HOSTS }}
+    steps:
+      - name: Validate rollback configuration
+        run: |
+          set -euo pipefail
+          required_vars=(
+            PROD_DOMAIN
+            PROD_ENV_FILE
+            PROD_SSH_HOST
+            PROD_SSH_PORT
+            PROD_SSH_PRIVATE_KEY
+            PROD_SSH_USER
+            PROD_SSH_KNOWN_HOSTS
+          )
+          for name in "${required_vars[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing required rollback configuration: ${name}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          mkdir -p "${HOME}/.ssh"
+          chmod 700 "${HOME}/.ssh"
+          printf "%s\n" "${PROD_SSH_PRIVATE_KEY}" > "${HOME}/.ssh/id_ed25519"
+          chmod 600 "${HOME}/.ssh/id_ed25519"
+          printf "%s\n" "${PROD_SSH_KNOWN_HOSTS}" > "${HOME}/.ssh/known_hosts"
+          chmod 600 "${HOME}/.ssh/known_hosts"
+
+      - name: List current and available releases
+        run: |
+          set -euo pipefail
+          ssh_target="${PROD_SSH_USER}@${PROD_SSH_HOST}"
+          ssh -p "${PROD_SSH_PORT}" -o StrictHostKeyChecking=yes "${ssh_target}" \
+            "set -euo pipefail; ls -1 /opt/mines-ai/releases; echo '---'; readlink -f /opt/mines-ai/current"
+
+      - name: Execute rollback
+        run: |
+          set -euo pipefail
+          ssh_target="${PROD_SSH_USER}@${PROD_SSH_HOST}"
+          release_id="${{ github.event.inputs.release_id }}"
+          ssh -p "${PROD_SSH_PORT}" -o StrictHostKeyChecking=yes "${ssh_target}" \
+            "set -euo pipefail; sudo -n /opt/mines-ai/scripts/deploy/rollback-single-vm.sh \
+              --release-id '${release_id}' \
+              --domain '${PROD_DOMAIN}' \
+              --env-file '${PROD_ENV_FILE}'"
+
+      - name: Verify smoke checks
+        run: |
+          set -euo pipefail
+          ssh_target="${PROD_SSH_USER}@${PROD_SSH_HOST}"
+          verified_at="$(date -u '+%Y-%m-%d %H:%M:%S')"
+          ssh -p "${PROD_SSH_PORT}" -o StrictHostKeyChecking=yes "${ssh_target}" \
+            "set -euo pipefail; sudo -n /opt/mines-ai/scripts/deploy/smoke-check.sh \
+              --domain '${PROD_DOMAIN}' \
+              --env-file '${PROD_ENV_FILE}' \
+              --journal-window '${verified_at}'"
+
+      - name: Show rollback result
+        run: |
+          set -euo pipefail
+          ssh_target="${PROD_SSH_USER}@${PROD_SSH_HOST}"
+          ssh -p "${PROD_SSH_PORT}" -o StrictHostKeyChecking=yes "${ssh_target}" \
+            "set -euo pipefail; readlink -f /opt/mines-ai/current"
+
+      - name: Collect failure diagnostics
+        if: failure()
+        run: |
+          set -euo pipefail
+          ssh_target="${PROD_SSH_USER}@${PROD_SSH_HOST}"
+          ssh -p "${PROD_SSH_PORT}" -o StrictHostKeyChecking=yes "${ssh_target}" \
+            "set +e;
+             sudo -n systemctl status mines-ai-api caddy cloud-sql-proxy --no-pager;
+             sudo -n journalctl -u mines-ai-api -u cloud-sql-proxy -u caddy --since '10 minutes ago' --no-pager | tail -n 300;
+             sudo -n readlink -f /opt/mines-ai/current"

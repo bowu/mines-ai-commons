@@ -1,0 +1,105 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: mines_ai_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d mines_ai_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .nvmrc
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck:all
+
+      - name: Migrate database
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/mines_ai_test
+        run: pnpm db:migrate
+
+      - name: Unit tests
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/mines_ai_test
+        run: pnpm test
+
+      - name: Integration tests
+        env:
+          INTEGRATION_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/mines_ai_integration
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/mines_ai_integration
+        run: pnpm test:integration
+
+      - name: Client tests
+        run: pnpm --filter mines-ai-commons-client test
+
+      - name: Install Playwright
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: E2E tests
+        env:
+          E2E_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/mines_ai_test
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/mines_ai_test
+        run: pnpm exec playwright test --project=chromium
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Build API image
+        run: |
+          for attempt in 1 2 3; do
+            if docker build -t mines-ai-commons:test .; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              sleep $((attempt * 10))
+            fi
+          done
+          exit 1
+
+      - name: Build client image
+        run: |
+          for attempt in 1 2 3; do
+            if docker build -f client/Dockerfile -t mines-ai-client:test .; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              sleep $((attempt * 10))
+            fi
+          done
+          exit 1

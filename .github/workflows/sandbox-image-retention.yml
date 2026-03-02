@@ -1,0 +1,112 @@
+name: Sandbox Image Retention
+
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+    inputs:
+      runtime_keep_days:
+        description: "Keep runtime candidate/demoted images newer than this many days"
+        required: false
+        type: string
+        default: "14"
+      base_keep_days:
+        description: "Keep base candidate/demoted images newer than this many days"
+        required: false
+        type: string
+        default: "90"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  cleanup-runtime:
+    runs-on: ubuntu-latest
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      KEEP_DAYS: ${{ github.event.inputs.runtime_keep_days || '14' }}
+      IMAGE_TYPE: runtime
+      GCP_SERVICE_ACCOUNT_KEY: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Validate required repo vars/secrets
+        run: |
+          set -euo pipefail
+          test -n "${GCP_PROJECT_ID}" || (echo "Missing repository variable: GCP_PROJECT_ID" >&2; exit 1)
+          if [ -n "${GCP_SERVICE_ACCOUNT_KEY}" ]; then
+            exit 0
+          fi
+          test -n "${GCP_WORKLOAD_IDENTITY_PROVIDER}" || (echo "Missing secret: GCP_WORKLOAD_IDENTITY_PROVIDER" >&2; exit 1)
+          test -n "${GCP_SERVICE_ACCOUNT}" || (echo "Missing secret: GCP_SERVICE_ACCOUNT" >&2; exit 1)
+
+      - name: Authenticate to GCP (service account key)
+        if: ${{ env.GCP_SERVICE_ACCOUNT_KEY != '' }}
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
+        with:
+          credentials_json: ${{ env.GCP_SERVICE_ACCOUNT_KEY }}
+
+      - name: Authenticate to GCP (workload identity)
+        if: ${{ env.GCP_SERVICE_ACCOUNT_KEY == '' }}
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f
+
+      - name: Cleanup stale runtime images
+        run: |
+          set -euo pipefail
+          bash scripts/gcp/cleanup-sandbox-images.sh
+
+  cleanup-base:
+    runs-on: ubuntu-latest
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      KEEP_DAYS: ${{ github.event.inputs.base_keep_days || '90' }}
+      IMAGE_TYPE: base
+      GCP_SERVICE_ACCOUNT_KEY: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Validate required repo vars/secrets
+        run: |
+          set -euo pipefail
+          test -n "${GCP_PROJECT_ID}" || (echo "Missing repository variable: GCP_PROJECT_ID" >&2; exit 1)
+          if [ -n "${GCP_SERVICE_ACCOUNT_KEY}" ]; then
+            exit 0
+          fi
+          test -n "${GCP_WORKLOAD_IDENTITY_PROVIDER}" || (echo "Missing secret: GCP_WORKLOAD_IDENTITY_PROVIDER" >&2; exit 1)
+          test -n "${GCP_SERVICE_ACCOUNT}" || (echo "Missing secret: GCP_SERVICE_ACCOUNT" >&2; exit 1)
+
+      - name: Authenticate to GCP (service account key)
+        if: ${{ env.GCP_SERVICE_ACCOUNT_KEY != '' }}
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
+        with:
+          credentials_json: ${{ env.GCP_SERVICE_ACCOUNT_KEY }}
+
+      - name: Authenticate to GCP (workload identity)
+        if: ${{ env.GCP_SERVICE_ACCOUNT_KEY == '' }}
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f
+
+      - name: Cleanup stale base images
+        run: |
+          set -euo pipefail
+          bash scripts/gcp/cleanup-sandbox-images.sh
